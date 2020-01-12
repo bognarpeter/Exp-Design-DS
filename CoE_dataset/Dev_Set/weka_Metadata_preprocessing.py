@@ -125,3 +125,7 @@ df_join.to_csv("metadata.csv",index=False)
 #WEKA 10 fold CV, 
 #                TP Rate  FP Rate  Precision  Recall   F-Measure  MCC      ROC Area  PRC Area
 #Weighted Avg.    0,558    0,519    0,557      0,558    0,468      0,067    0,522     0,526     
+
+# RF
+#                TP Rate  FP Rate  Precision  Recall   F-Measure  MCC      ROC Area  PRC Area
+# Weighted Avg.    0,526    0,493    0,520      0,526    0,510      0,036    0,467     0,521     
