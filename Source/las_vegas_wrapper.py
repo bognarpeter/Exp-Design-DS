@@ -66,6 +66,7 @@ def LVW(meta_x, meta_Y, K, classifier):
 
 
 def perform_cross_validation(X, y, classi):
+    # Set random state to always get the same splits
     kf = KFold(n_splits=10, shuffle=True, random_state=42)
     predictions = []
     ground_truth = []
@@ -87,27 +88,61 @@ def perform_cross_validation(X, y, classi):
     precision = precision_score(ground_truth, predictions)
     recall = recall_score(ground_truth, predictions)
     f1 = f1_score(ground_truth, predictions)
-    return precision, recall, f1
+    return precision, recall, f1, predictions, ground_truth
 
 
 def classify(type, classifiers, data_x, data_y, scoring):
+    # These are the selected features of the LVW for each classifier
+    LVW_selected_features = []
+    # These are the predicted labels from each classifier
+    label_predictions = []
+    ground_truth = None
     for classi in classifiers:
         # Perform LVW (not for random forest)
         if isinstance(classi, RandomForestClassifier):
-            ind = LVW(data_x, data_y, 10, classi)
-            scores = cross_validate(classi, X=data_x, y=data_y, cv=10,scoring=scoring)
-            f_1 = np.mean(scores["test_f1_score"])
-            precision = np.mean(scores["test_precision"])
-            recall = np.mean(scores["test_recall"])
+            scores = perform_cross_validation(data_x, data_y, classi)
+            precision = scores[0]
+            recall = scores[1]
+            f_1 = scores[2]
+            # Add predictions to the list
+            label_predictions.append(scores[3])
+            # Add the selected columns to the list
+            LVW_selected_features.append(data_x.columns)
         else:
             ind = LVW(data_x, data_y, 10, classi)
             scores = perform_cross_validation(data_x[ind], data_y, classi)
             precision = scores[0]
             recall = scores[1]
             f_1 = scores[2]
+            # Add predictions to the list
+            label_predictions.append(scores[3])
+            # Add the selected columns to the list
+            LVW_selected_features.append(ind)
         print("Classifier: %s, Modality: %s, Precision: %.3f, Recall: %.3f, F1: %.3f" % (classi.__class__.__name__, type, precision, recall, f_1))
+        #print(ind)
+        #print(data_x[ind])
+    # Set the ground truth (It does not matter from which classifier since the splits of all classifers are the same because of the same seed)
+    ground_truth = scores[4]
+    return (label_predictions, LVW_selected_features, ground_truth)
 
+def _replaceitem(x, threshold):
+    if x >= threshold:
+        return 1
+    else:
+        return 0
 
+def majority_voting_cv(predictions, ground_truth):
+    # This is the number of classifiers, which is also the max number of 1's for one movie recommendation
+    max_value = len(predictions)
+    # Predictions is a list of list. First sum the columns
+    sums = [sum(i) for i in zip(*predictions)]
+    majority = [_replaceitem(i, max_value/2) for i in sums]
+    #print(majority)
+    precision = precision_score(ground_truth, majority)
+    recall = recall_score(ground_truth, majority)
+    f1 = f1_score(ground_truth, majority)
+    print("Voting (cv), Precision: %.3f, Recall: %.3f, F1: %.3f" % (precision, recall, f1))
+    return precision, recall, f1
 
 warnings.filterwarnings('ignore')
 np.random.seed(50)
@@ -153,7 +188,18 @@ visual_classifiers = [KNeighborsClassifier(),
                SVC(), RandomForestClassifier(),
                AdaBoostClassifier(), GradientBoostingClassifier()]
 
-#classify('metadata', metadata_classifiers, metadata_x, metadata_Y, scoring)
-classify('audio', audio_classifiers, audio_x, audio_Y, scoring)
-classify('textual', textual_classifiers, textual_x, textual_Y, scoring)
-classify('visual', visual_classifiers, visual_x, visual_Y, scoring)
+metadata_results = classify('metadata', metadata_classifiers, metadata_x, metadata_Y, scoring)
+audio_results = classify('audio', audio_classifiers, audio_x, audio_Y, scoring)
+textual_results = classify('textual', textual_classifiers, textual_x, textual_Y, scoring)
+visual_results = classify('visual', visual_classifiers, visual_x, visual_Y, scoring)
+
+# CV Ground Truth (again it does not matter which ground truth we use because the split is always the same)
+ground_truth = metadata_results[2]
+# Predictions of all classifiers
+all_predictions = metadata_results[0].copy()
+all_predictions.extend(audio_results[0])
+all_predictions.extend(textual_results[0])
+all_predictions.extend(visual_results[0])
+
+# Perform majority voting
+majority_voting_cv(all_predictions, ground_truth)
