@@ -64,8 +64,10 @@ def LVW(meta_x, meta_Y, K, classifier):
     columns = meta_x.iloc[:,S].columns
     return columns
 
-
-def perform_cross_validation(X, y, classi):
+'''
+LVW parameter is used to indicate if we should perform LVW or not
+'''
+def perform_cross_validation(X, y, classi, use_lvw):
     # Set random state to always get the same splits
     kf = KFold(n_splits=10, shuffle=True, random_state=42)
     predictions = []
@@ -75,12 +77,17 @@ def perform_cross_validation(X, y, classi):
         X_test = X.loc[test_idx]
         y_train = y.loc[train_idx]
         y_test = y.loc[test_idx]
-        # Perform Las Vegas Wrapper
-        ind = LVW(X_train, y_train, 10, classi)
+        if use_lvw:
+            # Perform Las Vegas Wrapper
+            ind = LVW(X_train, y_train, 10, classi)
 
-        classi.fit(X_train[ind], y_train)
-        # Predict
-        fold_predictions = classi.predict(X_test[ind])
+            classi.fit(X_train[ind], y_train)
+            # Predict
+            fold_predictions = classi.predict(X_test[ind])
+        else:
+            classi.fit(X_train, y_train)
+            # Predict
+            fold_predictions = classi.predict(X_test)
         ground_truth.extend(y_test)
         predictions.extend(fold_predictions)
 
@@ -91,7 +98,7 @@ def perform_cross_validation(X, y, classi):
     return precision, recall, f1, predictions, ground_truth
 
 
-def classify(type, classifiers, data_x, data_y, scoring):
+def classify(type, classifiers, data_x, data_y):
     # These are the selected features of the LVW for each classifier
     LVW_selected_features = []
     # These are the predicted labels from each classifier
@@ -100,7 +107,7 @@ def classify(type, classifiers, data_x, data_y, scoring):
     for classi in classifiers:
         # Perform LVW (not for random forest)
         if isinstance(classi, RandomForestClassifier):
-            scores = perform_cross_validation(data_x, data_y, classi)
+            scores = perform_cross_validation(data_x, data_y, classi, False)
             precision = scores[0]
             recall = scores[1]
             f_1 = scores[2]
@@ -109,8 +116,8 @@ def classify(type, classifiers, data_x, data_y, scoring):
             # Add the selected columns to the list
             LVW_selected_features.append(data_x.columns)
         else:
+            scores = perform_cross_validation(data_x, data_y, classi, True)
             ind = LVW(data_x, data_y, 10, classi)
-            scores = perform_cross_validation(data_x[ind], data_y, classi)
             precision = scores[0]
             recall = scores[1]
             f_1 = scores[2]
@@ -142,6 +149,17 @@ def majority_voting_cv(predictions, ground_truth):
     recall = recall_score(ground_truth, majority)
     f1 = f1_score(ground_truth, majority)
     print("Voting (cv), Precision: %.3f, Recall: %.3f, F1: %.3f" % (precision, recall, f1))
+    return precision, recall, f1
+
+def label_stacking_cv(predictions, ground_truth):
+    X = pd.DataFrame(predictions).T
+    y = pd.Series(ground_truth)
+    classi = LogisticRegression()
+    results = perform_cross_validation(X, y, classi, False)
+    precision = results[0]
+    recall = results[1]
+    f1 = results[2]
+    print("Label Stacking (cv), Precision: %.3f, Recall: %.3f, F1: %.3f" % (precision, recall, f1))
     return precision, recall, f1
 
 warnings.filterwarnings('ignore')
@@ -188,10 +206,10 @@ visual_classifiers = [KNeighborsClassifier(),
                SVC(), RandomForestClassifier(),
                AdaBoostClassifier(), GradientBoostingClassifier()]
 
-metadata_results = classify('metadata', metadata_classifiers, metadata_x, metadata_Y, scoring)
-audio_results = classify('audio', audio_classifiers, audio_x, audio_Y, scoring)
-textual_results = classify('textual', textual_classifiers, textual_x, textual_Y, scoring)
-visual_results = classify('visual', visual_classifiers, visual_x, visual_Y, scoring)
+metadata_results = classify('metadata', metadata_classifiers, metadata_x, metadata_Y)
+audio_results = classify('audio', audio_classifiers, audio_x, audio_Y)
+textual_results = classify('textual', textual_classifiers, textual_x, textual_Y)
+visual_results = classify('visual', visual_classifiers, visual_x, visual_Y)
 
 # CV Ground Truth (again it does not matter which ground truth we use because the split is always the same)
 ground_truth = metadata_results[2]
@@ -203,3 +221,5 @@ all_predictions.extend(visual_results[0])
 
 # Perform majority voting
 majority_voting_cv(all_predictions, ground_truth)
+# Perform label stacking
+label_stacking_cv(all_predictions, ground_truth)
