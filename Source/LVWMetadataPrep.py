@@ -41,14 +41,20 @@ def preprocess_test_metadata(metadata_df):
     metadata_df["rated"] = metadata_df["rated"].map(age_mapping)
 
     # Impute the missing values of training data
-    values = metadata_df.iloc[:, list(range(4, 8))].values
+    values = metadata_df.iloc[:, list(range(2, 8))].values
     imputer = IterativeImputer(random_state=1)
     transformed_values = imputer.fit_transform(values)
-    colnames = metadata_df.columns[4:8]
+    colnames = metadata_df.columns[2:8]
     metadata_df[colnames] = transformed_values
     return metadata_df
 
-##### Preprocess the Testdata which is useable for ML
-metadata_testset = pd.read_csv("../CoE_dataset/Test_Set/metadata_test_plus_ratings.csv")
-metadata_testset = preprocess_test_metadata(metadata_testset)
-metadata_testset.to_csv("../Results/metadata_test.csv", index=False)
+
+def main():
+    ##### Preprocess the Testdata which is useable for ML
+    metadata_testset = pd.read_csv("../CoE_dataset/Test_Set/metadata_test_plus_ratings_sorted.csv")
+    metadata_testset = preprocess_test_metadata(metadata_testset)
+    metadata_testset.to_csv("../Results/metadata_test_sorted.csv", index=False)
+
+
+if __name__ == "__main__":
+    main()

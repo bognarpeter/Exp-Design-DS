@@ -67,7 +67,7 @@ def LVW(meta_x, meta_Y, K, classifier):
 '''
 LVW parameter is used to indicate if we should perform LVW or not
 '''
-def perform_cross_validation(X, y, classi, use_lvw):
+def perform_cross_validation(X, y, classi, use_lvw, metadata=None, visual=None, audio=None, textual=None):
     # Set random state to always get the same splits
     kf = KFold(n_splits=10, shuffle=True, random_state=42)
     predictions = []
@@ -77,6 +77,17 @@ def perform_cross_validation(X, y, classi, use_lvw):
         X_test = X.loc[test_idx]
         y_train = y.loc[train_idx]
         y_test = y.loc[test_idx]
+        # Add metadata, audio, visual and textual for label feature-stacking
+        if metadata is not None:
+            X_train = pd.concat([X_train, metadata.loc[train_idx]], axis=1)
+            X_train = pd.concat([X_train, visual.loc[train_idx]], axis=1)
+            X_train = pd.concat([X_train, audio.loc[train_idx]], axis=1)
+            X_train = pd.concat([X_train, textual.loc[train_idx]], axis=1)
+
+            X_test = pd.concat([X_test, metadata.loc[test_idx]], axis=1)
+            X_test = pd.concat([X_test, visual.loc[test_idx]], axis=1)
+            X_test = pd.concat([X_test, audio.loc[test_idx]], axis=1)
+            X_test = pd.concat([X_test, textual.loc[test_idx]], axis=1)
         if use_lvw:
             # Perform Las Vegas Wrapper
             ind = LVW(X_train, y_train, 10, classi)
@@ -126,8 +137,6 @@ def classify(type, classifiers, data_x, data_y):
             # Add the selected columns to the list
             LVW_selected_features.append(ind)
         print("Classifier: %s, Modality: %s, Precision: %.3f, Recall: %.3f, F1: %.3f" % (classi.__class__.__name__, type, precision, recall, f_1))
-        #print(ind)
-        #print(data_x[ind])
     # Set the ground truth (It does not matter from which classifier since the splits of all classifers are the same because of the same seed)
     ground_truth = scores[4]
     return (label_predictions, LVW_selected_features, ground_truth)
@@ -138,17 +147,45 @@ def _replaceitem(x, threshold):
     else:
         return 0
 
-def majority_voting_cv(predictions, ground_truth):
+def majority_voting_cv(predictions, ground_truth, cv=True):
     # This is the number of classifiers, which is also the max number of 1's for one movie recommendation
     max_value = len(predictions)
     # Predictions is a list of list. First sum the columns
     sums = [sum(i) for i in zip(*predictions)]
     majority = [_replaceitem(i, max_value/2) for i in sums]
-    #print(majority)
     precision = precision_score(ground_truth, majority)
     recall = recall_score(ground_truth, majority)
     f1 = f1_score(ground_truth, majority)
-    print("Voting (cv), Precision: %.3f, Recall: %.3f, F1: %.3f" % (precision, recall, f1))
+    if cv:
+        print("Voting (cv), Precision: %.3f, Recall: %.3f, F1: %.3f" % (precision, recall, f1))
+    else:
+        print("Voting (Test), Precision: %.3f, Recall: %.3f, F1: %.3f" % (precision, recall, f1))
+    return precision, recall, f1
+
+def classify_test(classifiers, selected_features, X_train, X_test, y_train):
+    predictions = []
+    for classi, feat in zip(classifiers, selected_features):
+        feat = feat & X_test.columns
+        classi.fit(X_train[feat], y_train)
+        # Only take those which they have in common
+        pred = classi.predict(X_test[feat])
+        predictions.append(pred)
+    return predictions
+
+def label_stacking_test(predictions_train, predictions_test , ground_truth_train, ground_truth_test):
+    X_train = pd.DataFrame(predictions_train).T
+    y_train = pd.Series(ground_truth_train)
+
+    X_test = pd.DataFrame(predictions_test).T
+    y_test = ground_truth_test
+
+    classi = LogisticRegression()
+    classi.fit(X_train, y_train)
+    pred = classi.predict(X_test)
+    precision = precision_score(y_test, pred)
+    recall = recall_score(y_test, pred)
+    f1 = f1_score(y_test, pred)
+    print("Stacking (test), Precision: %.3f, Recall: %.3f, F1: %.3f" % (precision, recall, f1))
     return precision, recall, f1
 
 def label_stacking_cv(predictions, ground_truth):
@@ -162,8 +199,19 @@ def label_stacking_cv(predictions, ground_truth):
     print("Label Stacking (cv), Precision: %.3f, Recall: %.3f, F1: %.3f" % (precision, recall, f1))
     return precision, recall, f1
 
+def label_feature_stacking_cv(predictions, ground_truth, metadata, visual, audio, textual):
+    X = pd.DataFrame(predictions).T
+    y = pd.Series(ground_truth)
+    classi = LogisticRegression()
+    results = perform_cross_validation(X, y, classi, False, metadata, visual, audio, textual)
+    precision = results[0]
+    recall = results[1]
+    f1 = results[2]
+    print("Label Feature Stacking (cv), Precision: %.3f, Recall: %.3f, F1: %.3f" % (precision, recall, f1))
+    return precision, recall, f1
+
 warnings.filterwarnings('ignore')
-np.random.seed(50)
+np.random.seed(100)
 
 # Define Scoring methods
 scoring = {'precision' : make_scorer(precision_score),
@@ -181,19 +229,40 @@ textual_x = textual_df.drop("goodforairplane", axis=1)
 textual_Y = textual_df["goodforairplane"]
 
 # Read Visual Data
-visual_df = pd.read_csv("../Results/visual.csv", sep=",")
+visual_df = pd.read_csv("../Results/visual_sorted.csv", sep=",")
 visual_x = visual_df.drop("goodforairplane", axis=1)
 visual_Y = visual_df["goodforairplane"]
 
 # Read in Meta Data
-metadata_df = pd.read_csv("../Results/meta_plus_ratings.csv", sep=",")
+metadata_df = pd.read_csv("../Results/meta_sorted.csv", sep=",")
 # Preprocess
 metadata_x, metadata_Y = preprocess_metadata(metadata_df)
+
+##### Read in the Test Data #######
+# Read Audio Data
+audio_test_df = pd.read_csv("../Results/audio_test.csv", sep=",")
+audio_test_x = audio_test_df.drop("goodforairplane", axis=1)
+audio_test_Y = audio_test_df["goodforairplane"]
+
+# Read Textual Data
+textual_test_df = pd.read_csv("../Results/textual_test.csv", sep=",")
+textual_test_x = textual_test_df.drop("goodforairplane", axis=1)
+textual_test_Y = textual_test_df["goodforairplane"]
+
+# Read Visual Data
+visual_test_df = pd.read_csv("../Results/visual_test_sorted.csv", sep=",")
+visual_test_x = visual_test_df.drop("goodforairplane", axis=1)
+visual_test_Y = visual_test_df["goodforairplane"]
+
+# Read Meta Data
+metadata_test_df = pd.read_csv("../Results/metadata_test_sorted.csv", sep=",")
+metadata_test_x = metadata_test_df.drop("goodforairplane", axis=1)
+metadata_test_Y = metadata_test_df["goodforairplane"]
 
 metadata_classifiers = [KNeighborsClassifier(), NearestCentroid(),
                DecisionTreeClassifier(), LogisticRegression(),
                SVC(), BaggingClassifier(), RandomForestClassifier(),
-               AdaBoostClassifier(), GradientBoostingClassifier(), GaussianNB()]
+               AdaBoostClassifier(), GradientBoostingClassifier()]
 
 audio_classifiers = [LogisticRegression(),
                GradientBoostingClassifier()]
@@ -223,3 +292,24 @@ all_predictions.extend(visual_results[0])
 majority_voting_cv(all_predictions, ground_truth)
 # Perform label stacking
 label_stacking_cv(all_predictions, ground_truth)
+# Perform label feature stacking
+label_feature_stacking_cv(all_predictions, ground_truth, metadata_x, visual_x, audio_x, textual_x)
+
+
+### Now do it for the test set
+metadata_test_results = classify_test(metadata_classifiers, metadata_results[1], metadata_x, metadata_test_x, metadata_Y)
+audio_test_results = classify_test(audio_classifiers, audio_results[1], audio_x, audio_test_x, audio_Y)
+textual_test_results = classify_test(textual_classifiers, textual_results[1], textual_x, textual_test_x, textual_Y)
+visual_test_results = classify_test(visual_classifiers, visual_results[1], visual_x, visual_test_x, visual_Y)
+# Test ground truth (it does not matter which one we take)
+ground_truth_test = metadata_test_Y.tolist()
+
+# Predictions of all classifiers
+all_test_predictions = metadata_test_results.copy()
+all_test_predictions.extend(audio_test_results)
+all_test_predictions.extend(textual_test_results)
+all_test_predictions.extend(visual_test_results)
+
+# Perform majoirty voting on test set
+majority_voting_cv(all_test_predictions, ground_truth_test, False)
+label_stacking_test(all_predictions, all_test_predictions, ground_truth, ground_truth_test)
